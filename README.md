@@ -209,6 +209,6 @@ moderngl
 
 ---
 
-## 📜 License
+## STI Pasay-edsa
 
-MIT — free to use, modify, and share.
+Created by Hakuryu Acosta Kato
