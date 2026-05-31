@@ -173,6 +173,4 @@ numpy
 
 ---
 
-## 📜 License
-
-MIT — feel free to use, modify, and share.
+Created by Hakuryu Acosta Kato BSCS-401
