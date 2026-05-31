@@ -1,49 +1,57 @@
-# 🌿 Neural Ecosystem Simulator
+# 🌍 Neural Ecosystem Simulator 3D
 
-A real-time evolutionary ecosystem simulation powered by neural networks, where creatures (prey, predators, microbials, and apex predators) evolve and compete across generations — all running in a Tkinter GUI.
+A real-time **3D evolutionary ecosystem simulation** powered by neural networks and rendered with OpenGL. Hundreds of creatures — omnivores, predators, microbials, and apex predators — compete, evolve, and speciate across generations on a living terrain.
+
+---
+
+## ✨ Features
+
+- **3D OpenGL renderer** — instanced geometry per species (spheres, cylinders, cones, cubes), GLSL shaders, orbit camera
+- **Batched neural brains** — every creature runs a tiny 2-layer neural network, all evaluated in one GPU batch per tick
+- **Evolutionary pressure** — creatures reproduce, mutate, and die; fittest lineages persist across species events
+- **Emergent ecology** — predator/prey cycles, pollination mechanics, horizontal gene transfer for microbials
+- **Live HUD** — population bars, species log, extinction log, custom species designer — all rendered as OpenGL texture overlays
+- **Optional GPU acceleration** — CuPy zero-copy tensors on CUDA, DirectML support on Windows AMD/Intel
 
 ---
 
 ## 🐍 Python Version
 
-**Python 3.9 or higher** is recommended. Python 3.10–3.12 works best for PyTorch compatibility.
+**Python 3.10 – 3.12** recommended. PyTorch CUDA wheels are best tested on these versions.
 
 ---
 
-## 📦 Required Packages
+## 📦 Dependencies
 
-### Core (required)
+### Required
 
 | Package | Purpose | Install |
 |---|---|---|
-| `torch` | Neural networks & batched brain simulation | `pip install torch` |
-| `numpy` | Fast distance calculations & input arrays | `pip install numpy` |
-| `tkinter` | GUI (canvas, controls, panels) | Built into Python (see note below) |
+| `torch` | Neural networks, GPU batching, physics | `pip install torch` |
+| `numpy` | Array math, distance matrices | `pip install numpy` |
+| `pygame` | Window, input handling, HUD surface rendering | `pip install pygame` |
+| `moderngl` | OpenGL 3.3 context, shaders, instanced rendering | `pip install moderngl` |
 
 ### Optional but Recommended
 
 | Package | Purpose | Install |
 |---|---|---|
-| `Cython` + `sim_core` | Accelerated simulation core | See [Cython Setup](#cython-setup-optional) below |
-| `torch-directml` | GPU acceleration on Windows (AMD/Intel) | `pip install torch-directml` |
-
-> **tkinter note:** On Linux/Ubuntu, tkinter may not be included. Install it with:
-> ```bash
-> sudo apt-get install python3-tk
-> ```
+| `cupy` | Zero-copy GPU arrays (CUDA only, faster sensing) | `pip install cupy-cuda12x` |
+| `torch-directml` | GPU on Windows AMD/Intel | `pip install torch-directml` |
+| `cython` + `sim_core` | Compiled simulation core | See [Cython Setup](#cython-setup-optional) |
 
 ---
 
 ## ⚙️ Installation
 
-### 1. Clone the repository
+### 1. Clone
 
 ```bash
-git clone https://github.com/your-username/neural-ecosystem-simulator.git
-cd neural-ecosystem-simulator
+git clone https://github.com/your-username/neural-ecosystem-3d.git
+cd neural-ecosystem-3d
 ```
 
-### 2. (Recommended) Create a virtual environment
+### 2. Create a virtual environment (recommended)
 
 ```bash
 python -m venv venv
@@ -55,122 +63,152 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-### 3. Install dependencies
+### 3. Install core dependencies
 
 ```bash
-pip install torch numpy
+pip install torch numpy pygame moderngl
 ```
 
-For PyTorch with CUDA (NVIDIA GPU support), visit [pytorch.org](https://pytorch.org/get-started/locally/) and select your OS + CUDA version. Example for CUDA 12.1:
+### 4. PyTorch with CUDA (NVIDIA GPU)
+
+Visit [pytorch.org](https://pytorch.org/get-started/locally/) to get the right wheel for your CUDA version. Example for CUDA 12.1:
 
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu121
 ```
 
----
+Then optionally install CuPy for zero-copy GPU sensing:
 
-## 🚀 Running the Simulator
+```bash
+pip install cupy-cuda12x   # match your CUDA version
+```
+
+### 5. Run
 
 ```bash
 python main.py
 ```
 
-> Replace `main.py` with whatever your entry-point file is named.
+---
+
+## 🖥️ GPU Device Selection
+
+The simulator auto-detects the best device at startup:
+
+| Priority | Device | Requirement |
+|---|---|---|
+| 1st | CUDA (NVIDIA) | PyTorch + CUDA |
+| 2nd | XPU (Intel Arc) | PyTorch XPU build |
+| 3rd | DirectML (AMD/Intel on Windows) | `pip install torch-directml` |
+| Fallback | CPU | Always available |
+
+Printed on launch:
+```
+PyTorch device : CUDA (NVIDIA GeForce RTX 3060)
+```
+
+CuPy is used automatically when CUDA is available, enabling zero-copy tensor↔array transfers for faster distance sensing.
 
 ---
 
 ## ⚡ Cython Setup (Optional)
 
-Cython compiles the simulation core to C for faster tick processing. This is optional — the simulator runs fine without it.
-
-### Install Cython
+Cython compiles the inner simulation loop to C for a speed boost.
 
 ```bash
 pip install cython
-```
-
-### Build the extension
-
-```bash
 python setup.py build_ext --inplace
 ```
 
-If successful, you'll see:
-
+If successful:
 ```
 Cython acceleration: ON
 ```
 
-Otherwise it falls back gracefully:
-
-```
-Cython acceleration: OFF — run: python setup.py build_ext --inplace
-```
+Falls back silently if not built.
 
 ---
 
-## 🖥️ GPU Support
+## 🎮 Controls
 
-The simulator auto-detects the best available device in this order:
+| Input | Action |
+|---|---|
+| `Space` | Pause / Resume |
+| `R` | Reset simulation |
+| `E` | Trigger a species event immediately |
+| `P` | Toggle target path lines |
+| `+` / `-` | Increase / decrease simulation speed |
+| **Mouse drag** | Orbit camera |
+| **Scroll wheel** | Zoom in / out |
+| **Left click HUD** | Interact with buttons, sliders, species designer |
 
-| Priority | Device | Requirement |
+---
+
+## 🧬 Species
+
+| Type | 3D Shape | Role |
 |---|---|---|
-| 1st | CUDA (NVIDIA) | `torch` with CUDA |
-| 2nd | XPU (Intel Arc) | `torch` with XPU support |
-| 3rd | DirectML (AMD/Intel on Windows) | `pip install torch-directml` |
-| Fallback | CPU | Always available |
+| **Omnivore** | Sphere | Eats plants and microbials |
+| **Predator** | Cylinder | Hunts omnivores |
+| **Micro** | Cube | Pollinates plants; shares genes via HGT |
+| **Apex** | Cone | Hunts all other species |
 
-You'll see the selected device printed on startup:
+---
+
+## 🖼️ Rendering Pipeline
+
 ```
-Using device: CUDA (NVIDIA GeForce RTX 3060)
+Terrain (ground quad + GLSL grid)
+  └── Water pools (instanced circle fans, alpha blend)
+      └── Food (instanced UV spheres, growth-colored)
+          └── Creatures (instanced per-species geometry)
+              └── Target paths (GL_LINES, per creature)
+                  └── HUD panels (Pygame → texture → fullscreen quad)
 ```
+
+All creature rendering uses **GPU instancing** — one draw call per species type per frame.
 
 ---
 
 ## 📁 Project Structure
 
 ```
-neural-ecosystem-simulator/
-├── main.py               # Entry point — World + EcosystemGUI
-├── species_config.py     # Species names, colors, environment colors
+neural-ecosystem-3d/
+├── main.py               # App, World, Renderer3D, OrbitCamera
+├── species_config.py     # Names, hex colors, environment palette
 ├── setup.py              # Cython build script (optional)
-├── sim_core.pyx          # Cython source (optional)
+├── sim_core.pyx          # Cython simulation core (optional)
 └── README.md
 ```
 
 ---
 
-## 🧬 Species Overview
-
-| Type | Symbol | Role |
-|---|---|---|
-| **Omnivore (Prey)** | Triangle | Eats plants and microbials |
-| **Predator** | Hollow triangle | Hunts prey |
-| **Micro** | Diamond | Pollinates plants, enables HGT gene sharing |
-| **Apex** | Hexagon | Hunts all other species |
-
----
-
-## 📋 Quick Requirements Summary
+## 📋 Requirements Summary
 
 ```
-python >= 3.9
+python >= 3.10
 torch
 numpy
-tkinter (built-in or via system package)
+pygame
+moderngl
 
 # Optional
-cython
-torch-directml  # Windows AMD/Intel GPU only
+cupy-cuda12x       # CUDA GPU sensing acceleration
+torch-directml     # Windows AMD/Intel GPU
+cython             # Compiled simulation core
 ```
 
-Or create a `requirements.txt`:
+Or as `requirements.txt`:
 
 ```txt
 torch
 numpy
+pygame
+moderngl
 ```
 
 ---
 
-Created by Hakuryu Acosta Kato BSCS-401
+## 📜 License
+
+MIT — free to use, modify, and share.
