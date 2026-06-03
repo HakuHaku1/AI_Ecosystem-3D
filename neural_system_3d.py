@@ -4,11 +4,11 @@ import torch, torch.nn as nn
 from torch.utils.dlpack import to_dlpack, from_dlpack
 import pygame
 import moderngl
-from species_config import (KIND_NAMES, SPECIES_COLORS, ENVIRONMENT_COLORS,
+from species_config import (KIND_NAMES, SPECIES_COLORS,
                              SPECIES_NAMES, SPECIES_EVENT_COLORS)
 
 # ── GPU device ────────────────────────────────────────────────────────────────
-def select_device():
+def select_device():  # picks best available compute device (CUDA > XP> DirectML > CPU)
     if torch.cuda.is_available():
         return torch.device("cuda"), f"CUDA ({torch.cuda.get_device_name(0)})"
     if hasattr(torch, "xpu") and torch.xpu.is_available():
@@ -47,35 +47,35 @@ except ImportError:
 
 # ── Simulation constants ──────────────────────────────────────────────────────
 WORLD_W, WORLD_H       = 2000, 2000
-INIT_OMNIVORE, INIT_PRED = 200, 80
-INIT_APEX, INIT_MICRO  = 15, 60
-FOOD_COUNT, FOOD_MAX   = 1200, 1800
+INIT_OMNIVORE, INIT_PRED = 80, 30
+INIT_APEX, INIT_MICRO  = 6, 25
+FOOD_COUNT, FOOD_MAX   = 500, 700
 PLANT_GROWTH_RATE      = 0.04
-EGG_TICKS              = 30
+EGG_TICKS              = 60
 THIRST_DEATH           = 120.0
 OMNIVORE_MAX_AGE       = 1800
 PRED_MAX_AGE           = 2000
 APEX_MAX_AGE           = 4000
-MICRO_MAX_AGE          = 2500
-OMNIVORE_REPRO_H       = 140.0
-PRED_REPRO_H           = 220.0
-APEX_REPRO_H           = 200.0
-MICRO_REPRO_H          = 60.0
+MICRO_MAX_AGE          = 1500
+OMNIVORE_REPRO_H       = 200.0
+PRED_REPRO_H           = 270.0
+APEX_REPRO_H           = 300.0
+MICRO_REPRO_H          = 160.0
 OMNIVORE_START_H       = 100.0
 PRED_START_H           = 150.0
 APEX_START_H           = 250.0
 MICRO_START_H          = 95.0
 THIRST_INC             = 0.15
-TARGET_OMNIVORE        = 600
-TARGET_PRED            = 160
-TARGET_MICRO           = 200
-TARGET_APEX            = 40
+TARGET_OMNIVORE        = 150
+TARGET_PRED            = 60
+TARGET_MICRO           = 80
+TARGET_APEX            = 20
 SPECIES_EVENT_MIN      = 250
 SPECIES_EVENT_MAX      = 500
-SPECIES_EVENT_SIZE     = (8, 16)
+SPECIES_EVENT_SIZE     = (8, 10)
 MAX_EVENT_LOG          = 50
 W_MARGIN               = 150.0
-MAX_POP                = 8000
+MAX_POP                = 2000
 
 PREFERRED_HEIGHT = {"omnivore": 5.0, "pred": 5.0, "micro": 5.0, "apex": 10.0}
 HEIGHT_SPRING    = 0.025
@@ -89,13 +89,13 @@ NEAR, FAR     = 0.5, 6000.0
 
 rng = random.Random()
 
-def _avg(lst, fn):
+def _avg(lst, fn):  # population-average of a stat across a creature list
     return round(sum(fn(c) for c in lst) / len(lst), 2) if lst else 0
 
-def carrying_clutch(count, target, boost, normal):
-    return boost if count < target * 0.5 else normal
+def carrying_clutch(count, target, boost, normal):  # returns larger clutch when population is critically low
+    return boost if count < target * 0.3 else normal
 
-def hex_to_rgb(h):
+def hex_to_rgb(h):  # hex color string to normalized float RGB tuple
     return (int(h[1:3], 16)/255.0, int(h[3:5], 16)/255.0, int(h[5:7], 16)/255.0)
 
 SPECIES_COLORS_RGB = {k: hex_to_rgb(v) for k, v in SPECIES_COLORS.items()}
@@ -223,7 +223,7 @@ void main() {
 """
 
 # ── Geometry helpers ──────────────────────────────────────────────────────────
-def _make_uv_sphere(stacks=12, slices=18):
+def _make_uv_sphere(stacks=12, slices=18):  # sphere mesh used for omnivores and food nodes
     verts, norms, idx = [], [], []
     ring = slices + 1
     for i in range(stacks + 1):
@@ -238,20 +238,19 @@ def _make_uv_sphere(stacks=12, slices=18):
         for j in range(slices):
             a = i * ring + j; b = a + ring
             idx += [a, b, a+1, b, b+1, a+1]
-    interleaved = []
     vv = np.array(verts, np.float32).reshape(-1, 3)
     nn_ = np.array(norms, np.float32).reshape(-1, 3)
     combined = np.hstack([vv, nn_]).astype(np.float32)
     return combined, np.array(idx, np.uint32)
 
-def _make_circle(segments=48):
+def _make_circle(segments=48):  # disc fan mesh for water pool rendering
     verts = [(0.0, 0.0)]
     for i in range(segments + 1):
         a = i * 2 * math.pi / segments
         verts.append((math.cos(a), math.sin(a)))
     return np.array(verts, np.float32)
 
-def _make_ground():
+def _make_ground():  # flat ground-plane quad covering the world
     v = np.array([
         0,       0, 0,
         WORLD_W, 0, 0,
@@ -261,7 +260,7 @@ def _make_ground():
     i = np.array([0, 1, 2, 0, 2, 3], dtype=np.uint32)
     return v, i
 
-def _make_cube(size=1.0):
+def _make_cube(size=1.0):  # cube mesh used for micro creatures
     half_size = size / 2.0
     # Vertices and normals for each face (duplicated for hard edges)
     interleaved_verts = np.array([
@@ -301,7 +300,7 @@ def _make_cube(size=1.0):
         ])
     return interleaved_verts, np.array(indices, np.uint32)
 
-def _make_cylinder(segments=16, radius=0.5, height=1.0):
+def _make_cylinder(segments=16, radius=0.5, height=1.0):  # cylinder mesh used for pred creatures
     verts = []
     norms = []
     indices = []
@@ -358,12 +357,11 @@ def _make_cylinder(segments=16, radius=0.5, height=1.0):
 
     return np.array(interleaved, np.float32), np.array(indices, np.uint32)
 
-def _make_cone(segments=16, radius=0.5, height=1.0):
+def _make_cone(segments=16, radius=0.5, height=1.0):  # cone mesh used for apex creatures
     verts = []
     norms = []
     indices = []
 
-    apex_idx = 0
     verts.extend([0.0, height / 2.0, 0.0])
     norms.extend([0.0, 1.0, 0.0])
 
@@ -407,7 +405,7 @@ def _make_cone(segments=16, radius=0.5, height=1.0):
     return np.array(interleaved, np.float32), np.array(indices, np.uint32)
 
 # ── Matrix math (no external dep) ────────────────────────────────────────────
-def _perspective(fov_deg, aspect, near, far):
+def _perspective(fov_deg, aspect, near, far):  # perspective projection matrix
     f = 1.0 / math.tan(math.radians(fov_deg) / 2)
     return np.array([
         [f/aspect,0,0,0],
@@ -416,30 +414,30 @@ def _perspective(fov_deg, aspect, near, far):
         [0,0,2*far*near/(near-far),0],
     ], dtype=np.float32)
 
-def _look_at(eye, target, up):
+def _look_at(eye, target, up):  # view matrix from camera position, look-at target, and up vector
     f = target - eye; f /= np.linalg.norm(f)
     r = np.cross(f, up); r /= np.linalg.norm(r)
     u = np.cross(r, f)
     return np.array([
-        [ r[0],  r[1],  r[2], -np.dot(r, eye)],
-        [ u[0],  u[1],  u[2], -np.dot(u, eye)],
-        [-f[0], -f[1], -f[2],  np.dot(f, eye)],
-        [0,      0,     0,     1             ],
+        [ r[0],r[1],r[2],-np.dot(r, eye)],
+        [ u[0],u[1],u[2],-np.dot(u, eye)],
+        [-f[0],-f[1],-f[2],np.dot(f, eye)],
+        [0,0,0,1],
     ], dtype=np.float32)
 
 # ── Neural network ────────────────────────────────────────────────────────────
-class BatchedBrains(nn.Module):
+class BatchedBrains(nn.Module):  # shared neural network for all creatures; 19 sensory inputs → 11 hidden → 3 motor outputs
     def __init__(self, pop=MAX_POP):
-        super().__init__()
+        super().__init__()  # allocates weight tensors for the full creature population
         self.w1 = nn.Parameter(torch.randn(pop, 19, 11, device=device) * 0.3)
         self.w2 = nn.Parameter(torch.randn(pop, 11,  3, device=device) * 0.3)
-    def forward(self, x, idx):
+    def forward(self, x, idx):  # two-layer tanh pass; outputs turn angle, acceleration, and spare channel
         h = torch.tanh(torch.bmm(x.view(-1, 1, 19), self.w1[idx]).view(-1, 11))
         return torch.tanh(torch.bmm(h.view(-1, 1, 11), self.w2[idx]).view(-1, 3))
 
 brains = BatchedBrains().to(device)
 
-def _mutate(parent, child, rate=0.12):
+def _mutate(parent, child, rate=0.12):  # inherits parent weights then injects Gaussian noise at mutation rate
     with torch.no_grad():
         brains.w1[child].copy_(brains.w1[parent])
         brains.w2[child].copy_(brains.w2[parent])
@@ -448,7 +446,7 @@ def _mutate(parent, child, rate=0.12):
         brains.w1[child] += torch.randn_like(brains.w1[child]) * 0.45 * m1
         brains.w2[child] += torch.randn_like(brains.w2[child]) * 0.45 * m2
 
-def _randomize(indices):
+def _randomize(indices):  # random weight initialization for freshly spawned lineages with no ancestor
     if not indices: return
     idx = torch.tensor(indices, dtype=torch.long, device=device)
     with torch.no_grad():
@@ -456,9 +454,9 @@ def _randomize(indices):
         brains.w2[idx] = torch.randn(len(indices), 11,  3, device=device) * 0.3
 
 # ── Simulation classes ────────────────────────────────────────────────────────
-class Creature:
+class Creature:  # base entity for omnivore, pred, micro, and apex; holds position, hunger, thirst, age, and brain
     _cid = 0
-    def __init__(self, kind, x=None, y=None, brain_idx=-1, gen=0, name=None, color=None):
+    def __init__(self, kind, x=None, y=None, brain_idx=-1, gen=0, name=None, color=None):  # assigns species-specific speed, body radius, starting hunger, and max lifespan
         Creature._cid += 1
         self.id   = Creature._cid
         self.kind = kind
@@ -483,7 +481,7 @@ class Creature:
         self.display_y  = PREFERRED_HEIGHT[kind]
         self.display_vy = 0.0
 
-    def apply_nn_output(self, nn_turn, accel, inputs, ws, skip_physics=False):
+    def apply_nn_output(self, _nn_turn, _accel, _inputs, ws, skip_physics=False):  # per-tick driver: syncs GPU movement, then routes to species food/combat/reproduction block
         self.age += 1; self.thirst += THIRST_INC
         self.repro_cooldown = max(0, self.repro_cooldown - 1)
         i = ws['creature_idx']; r = self.radius
@@ -503,6 +501,7 @@ class Creature:
             self.thirst = max(0.0, self.thirst - (0.8 if self.kind=="pred" else 2.5))
 
         children = []; eat_r = r + 5
+        # grazes ripe plants and opportunistically eats nearby micro; moves toward nearest food via NN steering; no combat, relies on speed and distance to avoid threats
         if self.kind == "omnivore":
             for h in cp.where(ws['dist_cf_cp'][i] < eat_r)[0].tolist():
                 f = ws['food_list'][h]
@@ -514,8 +513,9 @@ class Creature:
             self.fitness += 0.01
             if self.hunger >= OMNIVORE_REPRO_H and self.repro_cooldown == 0:
                 children = [self._egg(OMNIVORE_REPRO_H*0.35) for _ in range(
-                    carrying_clutch(ws['counts']['omnivore'], TARGET_OMNIVORE, 3, 1))]
+                    carrying_clutch(ws['counts']['omnivore'], TARGET_OMNIVORE, 2, 1))]
 
+        # hunts omnivores as primary food source; steers toward nearest prey when hungry; skirmishes apex with chip damage (20% hit chance) but rarely kills one outright
         elif self.kind == "pred":
             if self.hunger < PRED_REPRO_H:
                 for h in cp.where(ws['dist_omnivore_only_cp'][i] < r+8)[0].tolist():
@@ -531,8 +531,9 @@ class Creature:
                     break
             if self.hunger >= PRED_REPRO_H and self.repro_cooldown == 0:
                 children = [self._egg(PRED_REPRO_H*0.35) for _ in range(
-                    carrying_clutch(ws['counts']['pred'], TARGET_PRED, 4, 3))]
+                    carrying_clutch(ws['counts']['pred'], TARGET_PRED, 3, 2))]
 
+        # feeds on unripe plants and pollinates flowers to spawn new food nodes; no offensive combat; swarm crossover blends weights with nearby micro for collective learning
         elif self.kind == "micro":
             for h in cp.where(ws['dist_cf_all_cp'][i] < r+10)[0].tolist():
                 f = ws['all_food_list'][h]
@@ -546,10 +547,11 @@ class Creature:
                     if f.growth<1.0:
                         f.growth=min(1.0,f.growth+0.03); self.hunger=min(self.hunger+20,150); self.fitness+=0.2
             if self.hunger >= MICRO_REPRO_H and self.repro_cooldown == 0:
-                c = math.ceil(carrying_clutch(ws['counts']['micro'], TARGET_MICRO, 4, 3) * 0.8)
+                c = math.ceil(carrying_clutch(ws['counts']['micro'], TARGET_MICRO, 3, 2) * 0.8)
                 if c: self.repro_cooldown=30; self.hunger*=0.6
                 children = [self._egg(self.hunger) for _ in range(c)]
 
+        # hunts whichever species is most numerous (dynamically ranked each tick); steers toward highest-density prey type; brawls pred with 80% win rate, can lose and be killed on the remaining 20%
         elif self.kind == "apex":
             if self.hunger < APEX_REPRO_H:
                 for h in cp.where(ws['dist_apex_targets_cp'][i] < r+12)[0].tolist():
@@ -569,22 +571,22 @@ class Creature:
                     break
             if self.hunger >= APEX_REPRO_H and self.repro_cooldown == 0:
                 children = [self._egg(APEX_REPRO_H*0.35) for _ in range(
-                    carrying_clutch(ws['counts']['apex'], TARGET_APEX, 3, 2))]
+                    carrying_clutch(ws['counts']['apex'], TARGET_APEX, 2, 1))]
 
         if self.hunger<=0 or self.thirst>=THIRST_DEATH or self.age>self.max_age:
             self.alive=False
         return children
 
-    def _egg(self, c_hunger):
-        self.repro_cooldown = 100 if self.kind=="omnivore" else 70
+    def _egg(self, c_hunger):  # spawns a mutated offspring near the parent; deducts hunger as reproductive cost
+        self.repro_cooldown = 160 if self.kind=="omnivore" else 110
         if self.kind!="micro": self.hunger -= c_hunger
         return Egg(self.kind, self.x+rng.uniform(-20,20), self.y+rng.uniform(-20,20),
                    self.brain_idx, self.gen+1, self.speed+rng.uniform(-0.1,0.1), 
                    c_hunger, name=self.name, color=self.color, radius=self.radius)
 
-class Food:
+class Food:  # plant food node; starts unripe or needs pollination; omnivores harvest ripe nodes, micro pollinates and accelerates growth
     _fid = 0
-    def __init__(self, x=None, y=None, water_pools=None):
+    def __init__(self, x=None, y=None, water_pools=None):  # places food away from water; randomly assigns kind (0-2) and initial growth/pollination state
         Food._fid+=1; self.id=Food._fid; self.alive=True
         self.kind=rng.randint(0,2); self.needs_pollination=rng.random()<0.2
         self.growth=0.0 if self.needs_pollination else rng.uniform(0.0,1.0)
@@ -595,15 +597,15 @@ class Food:
                 self.x,self.y=rng.uniform(10,WORLD_W-10),rng.uniform(10,WORLD_H-10)
                 if not water_pools or all(math.hypot(self.x-w.x,self.y-w.y)>w.radius+3 for w in water_pools): break
 
-class WaterPool:
+class WaterPool:  # static thirst source; creatures reduce thirst when within radius each tick
     _wid=0
-    def __init__(self,x,y,radius):
+    def __init__(self,x,y,radius):  # records pool center and radius; used for distance checks and rendering
         WaterPool._wid+=1; self.id=WaterPool._wid
         self.x=x; self.y=y; self.radius=radius
 
-class Egg:
+class Egg:  # pending hatchling; incubates for EGG_TICKS then mutates the parent brain into a new creature
     _eid=0
-    def __init__(self,kind,x,y,parent_idx,gen,speed,hunger,name=None,color=None,radius=None):
+    def __init__(self,kind,x,y,parent_idx,gen,speed,hunger,name=None,color=None,radius=None):  # stores inherited traits (speed, hunger, color) until the egg hatches
         Egg._eid+=1; self.id=Egg._eid
         self.kind=kind; self.x=x; self.y=y
         self.parent_idx=parent_idx; self.gen=gen
@@ -611,15 +613,16 @@ class Egg:
         self.color=color; self.radius=radius 
 
 # ── World ─────────────────────────────────────────────────────────────────────
-class World:
-    def __init__(self): self.best_records={
+class World:  # simulation container; manages creature populations, food ecology, water, eggs, evolution, and species events
+    def __init__(self):  # seeds best-brain records per species then delegates to _init
+        self.best_records={
         "omnivore": {"w1":None,"w2":None,"speed":2.5,"max_age":OMNIVORE_MAX_AGE,"fitness":0.0},
         "pred": {"w1":None,"w2":None,"speed":2.4,"max_age":PRED_MAX_AGE,"fitness":0.0},
         "micro":{"w1":None,"w2":None,"speed":3.0,"max_age":MICRO_MAX_AGE,"fitness":0.0},
         "apex": {"w1":None,"w2":None,"speed":3.2,"max_age":APEX_MAX_AGE,"fitness":0.0},
     }; self._init()
 
-    def _init(self):
+    def _init(self):  # cold-starts all populations, food nodes, water pools, brain index pool, and event timers
         Creature._cid=Food._fid=Egg._eid=WaterPool._wid=0
         self.running=False; self.tick=0
         self.mut_rate=0.12
@@ -653,22 +656,27 @@ class World:
         self.next_species_event=rng.randint(SPECIES_EVENT_MIN,SPECIES_EVENT_MAX)
         self.next_pollination_tick=rng.randint(600,900)
 
-    def reset(self): self._init()
+    def reset(self): self._init()  # full world restart; resets all IDs and state
 
-    def step(self):
+    def step(self):  # one simulation tick: GPU distance sensing, NN inference, physics integration, species feeding/combat, egg hatching, food growth, and record keeping
         self.tick+=1
-        alive=[c for c in self.creatures if c.alive]
+        alive=self.creatures
         ws = {'new_foods': []}
 
         if alive:
-            c_pos=torch.tensor([[c.x,c.y] for c in alive],dtype=torch.float32,device=device)
-            f_ripe=[f for f in self.foods if f.alive and f.growth>=1.0 and not f.needs_pollination]
-            f_all =[f for f in self.foods if f.alive]
-            f_poll=[f for f in self.foods if f.alive and f.needs_pollination]
-            f_pos =torch.tensor([[f.x,f.y] for f in f_ripe],dtype=torch.float32,device=device) if f_ripe else torch.empty((0,2),device=device)
-            f_all_pos=torch.tensor([[f.x,f.y] for f in f_all],dtype=torch.float32,device=device) if f_all else torch.empty((0,2),device=device)
-            f_poll_pos=torch.tensor([[f.x,f.y] for f in f_poll],dtype=torch.float32,device=device) if f_poll else torch.empty((0,2),device=device)
-            w_pos=torch.tensor([[w.x,w.y] for w in self.water_pools],dtype=torch.float32,device=device)
+            _N=len(alive)
+            _cxy=np.empty((_N,2),np.float32)
+            _kinds=np.empty(_N,dtype='<U8')
+            for _i,_c in enumerate(alive):
+                _cxy[_i,0]=_c.x; _cxy[_i,1]=_c.y; _kinds[_i]=_c.kind
+            c_pos=torch.from_numpy(_cxy).to(device,non_blocking=True)
+            f_all=self.foods
+            f_ripe=[f for f in f_all if f.growth>=1.0 and not f.needs_pollination]
+            f_poll=[f for f in f_all if f.needs_pollination]
+            f_pos =torch.from_numpy(np.array([[f.x,f.y] for f in f_ripe],dtype=np.float32)).to(device,non_blocking=True) if f_ripe else torch.empty((0,2),device=device)
+            f_all_pos=torch.from_numpy(np.array([[f.x,f.y] for f in f_all],dtype=np.float32)).to(device,non_blocking=True) if f_all else torch.empty((0,2),device=device)
+            f_poll_pos=torch.from_numpy(np.array([[f.x,f.y] for f in f_poll],dtype=np.float32)).to(device,non_blocking=True) if f_poll else torch.empty((0,2),device=device)
+            w_pos=torch.from_numpy(np.array([[w.x,w.y] for w in self.water_pools],dtype=np.float32)).to(device,non_blocking=True)
 
             dist_cc=torch.cdist(c_pos,c_pos).to(device)
             dist_ns=dist_cc.clone(); dist_ns.fill_diagonal_(1e6)
@@ -677,10 +685,10 @@ class World:
             dist_cw =torch.cdist(c_pos,w_pos).to(device)
             dist_cp =torch.cdist(c_pos,f_poll_pos).to(device) if f_poll_pos.shape[0]>0 else torch.empty((len(alive),0),device=device)
 
-            om=torch.tensor([c.kind=="omnivore" for c in alive],dtype=torch.bool,device=device)
-            dm=torch.tensor([c.kind=="pred" for c in alive],dtype=torch.bool,device=device)
-            am=torch.tensor([c.kind=="apex" for c in alive],dtype=torch.bool,device=device)
-            mm=torch.tensor([c.kind=="micro" for c in alive],dtype=torch.bool,device=device)
+            om=torch.from_numpy(_kinds=="omnivore").to(device,non_blocking=True)
+            dm=torch.from_numpy(_kinds=="pred").to(device,non_blocking=True)
+            am=torch.from_numpy(_kinds=="apex").to(device,non_blocking=True)
+            mm=torch.from_numpy(_kinds=="micro").to(device,non_blocking=True)
             threat=dm|am; pred_tgt=om|am
 
             _huntable=[("omnivore",om),("pred",dm),("micro",mm),("apex",am)]
@@ -710,23 +718,24 @@ class World:
             })
 
             # ── Batched sensing ──
-            N=len(alive)
+            N=_N
             cpos_cp = t2c(c_pos); cx_ = cpos_cp[:,0]; cy_ = cpos_cp[:,1]
-            ang_ = cp.array([c.angle for c in alive], cp.float32)
+            _sense=cp.array([[c.angle,c.hunger,c.thirst] for c in alive],cp.float32)
+            ang_=_sense[:,0]
             om_ = t2c(om); dm_ = t2c(dm); mm_ = t2c(mm); am_ = t2c(am)
 
-            def near(D,P):
+            def near(D,P):  # find the closest thing and return how far away it is + where it is
                 if D.shape[1]==0: return cp.full(N,cp.inf,cp.float32),cp.full(N,cp.nan,cp.float32),cp.full(N,cp.nan,cp.float32)
                 md,mi=torch.min(D,dim=1); tgt=P[mi]
                 return t2c(md), t2c(tgt[:, 0]), t2c(tgt[:, 1])
 
-            def comb(pv,dv,mv,av):
+            def comb(pv,dv,mv,av):  # fill in each creature's nearest target info based on what type it is
                 d_=cp.empty(N,cp.float32); tx=cp.empty(N,cp.float32); ty=cp.empty(N,cp.float32)
                 for msk, v in ((om_, pv), (dm_, dv), (mm_, mv), (am_, av)):
                     d_[msk] = v[0][msk]; tx[msk] = v[1][msk]; ty[msk] = v[2][msk]
                 return d_,tx,ty
 
-            def asc(tx,ty):
+            def asc(tx,ty):  # figure out which direction the target is relative to where the creature is facing
                 a=cp.arctan2(ty-cy_,tx-cx_)-ang_; a=(a+cp.pi)%(2*cp.pi)-cp.pi
                 s,c_=cp.sin(a),cp.cos(a); miss=cp.isnan(tx); s[miss]=0.0; c_[miss]=1.0
                 return s,c_
@@ -742,8 +751,8 @@ class World:
             wd,wx_,wy_=near(dist_cw,w_pos)
 
             ts,tc=asc(tx,ty); as_,ac=asc(ax,ay); ss,sc=asc(sx,sy); ws_,wc=asc(wx_,wy_)
-            h_in=cp.clip(cp.array([c.hunger for c in alive],cp.float32)/180.,-1,1)
-            t_in=cp.clip(cp.array([c.thirst for c in alive],cp.float32)/100.,-1,1)
+            h_in=cp.clip(_sense[:,1]/180.,-1,1)
+            t_in=cp.clip(_sense[:,2]/100.,-1,1)
 
             wL = cp.clip(1.0 - (cx_ / W_MARGIN), 0.0, 1.0)
             wR = cp.clip(1.0 - ((WORLD_W - cx_) / W_MARGIN), 0.0, 1.0)
@@ -765,7 +774,7 @@ class World:
                 'dist_pred_only_cp': t2c(ws['dist_pred_only']),
             })
 
-            ai=torch.tensor([c.brain_idx for c in alive],dtype=torch.long,device=device)
+            ai=torch.from_numpy(np.array([c.brain_idx for c in alive],dtype=np.int64)).to(device,non_blocking=True)
             with torch.no_grad(): out=brains(c2t(inp),ai)
             out_cpu=out.cpu().numpy()
 
@@ -778,12 +787,9 @@ class World:
                 turns = torch.where(has_target, steering, turns)
                 accels = torch.where(has_target, torch.ones_like(accels), accels)
 
-                vx_=torch.tensor([c.vx for c in alive],device=device,dtype=torch.float32)
-                vy_=torch.tensor([c.vy for c in alive],device=device,dtype=torch.float32)
-                ang_t=torch.tensor([c.angle for c in alive],device=device,dtype=torch.float32)
-                spd=torch.tensor([c.speed for c in alive],device=device,dtype=torch.float32)
-                hun=torch.tensor([c.hunger for c in alive],device=device,dtype=torch.float32)
-                rad=torch.tensor([c.radius for c in alive],device=device,dtype=torch.float32)
+                _phys=np.array([[c.vx,c.vy,c.angle,c.speed,c.hunger,c.radius] for c in alive],dtype=np.float32)
+                _pt=torch.from_numpy(_phys).to(device,non_blocking=True)
+                vx_,vy_,ang_t,spd,hun,rad=_pt[:,0],_pt[:,1],_pt[:,2],_pt[:,3],_pt[:,4],_pt[:,5]
                 new_ang=ang_t+turns*0.28
                 spd_v=spd*(0.55+accels*0.45)
                 mv=torch.where(mm,0.92,0.78)
@@ -802,9 +808,8 @@ class World:
                 bm=torch.where(dm,0.01,torch.where(am,0.004,0.007))
                 cost=torch.where(am,0.015,0.025)
                 nh=hun-(spd_v**1.5)*cost-bm
-                ws['gpu_physics']={'x':nx.cpu().numpy(),'y':ny.cpu().numpy(),
-                                'vx':nvx.cpu().numpy(),'vy':nvy.cpu().numpy(),
-                                'angle':new_ang.cpu().numpy(),'hunger':nh.cpu().numpy()}
+                _gp=torch.stack([nx,ny,nvx,nvy,new_ang,nh],dim=1).cpu().numpy()
+                ws['gpu_physics']={'x':_gp[:,0],'y':_gp[:,1],'vx':_gp[:,2],'vy':_gp[:,3],'angle':_gp[:,4],'hunger':_gp[:,5]}
 
             new_eggs=[]
             for i,c in enumerate(alive):
@@ -843,14 +848,16 @@ class World:
         self.eggs=[e for e in self.eggs if e.alive]
 
         self.creatures=[c for c in self.creatures if c.alive]+hatchlings
-        self._last_counts={k:sum(1 for c in self.creatures if c.kind==k) for k in ("omnivore","pred","micro","apex")}
+        lc={"omnivore":0,"pred":0,"micro":0,"apex":0}
+        for c in self.creatures: lc[c.kind]+=1
+        self._last_counts=lc
         
         # ── Lineage-based Extinction Tracking ──
         curr_lineages = {}
         for c in self.creatures:
             l_key = (c.name, c.color, c.kind)
             curr_lineages[l_key] = curr_lineages.get(l_key, 0) + 1
-        for l_key, count in self.lineage_counts.items():
+        for l_key in self.lineage_counts:
             if l_key not in curr_lineages:
                 self.extinction_log.append({"tick": self.tick, "name": l_key[0], "color": l_key[1], "kind": l_key[2]})
                 if len(self.extinction_log) > MAX_EVENT_LOG: self.extinction_log = self.extinction_log[-MAX_EVENT_LOG:]
@@ -888,7 +895,7 @@ class World:
             self._species_event()
             self.next_species_event=self.tick+rng.randint(SPECIES_EVENT_MIN,SPECIES_EVENT_MAX)
 
-    def _species_event(self):
+    def _species_event(self):  # injects a new named lineage for each kind using the best recorded brain as evolutionary seed
         if not self.available_brain_indices: return
         for kind in ["omnivore","pred","micro","apex"]:
             if not self.available_brain_indices: break
@@ -913,7 +920,7 @@ class World:
             self.species_events=getattr(self,"species_events",[]); self.species_events.append({"tick":self.tick,"kind":kind,"name":name,"n":n,"color":color})
             if len(self.species_events)>MAX_EVENT_LOG: self.species_events=self.species_events[-MAX_EVENT_LOG:]
 
-    def spawn_custom(self, kind_idx):
+    def spawn_custom(self, kind_idx):  # user-triggered species drop with designer name, color, speed multiplier, and age multiplier
         if not self.available_brain_indices: return
         kinds = ["omnivore", "pred", "micro", "apex"]
         k, name = kinds[kind_idx], self.custom_name
@@ -950,21 +957,20 @@ class World:
         
         self.species_events.append({"tick":self.tick,"kind":k,"name":name,"n":n,"color":color_hex})
 
-    def stats(self):
-        lc=self._last_counts
-        def grp(k): return [c for c in self.creatures if c.kind==k]
+    def stats(self):  # returns per-kind averages of speed, generation, and fitness for HUD display
+        def grp(k): return [c for c in self.creatures if c.kind==k]  # filters creature list to a single species kind
         return {f"{k}_speed":_avg(grp(k),lambda c:c.speed) for k in("omnivore","pred","micro","apex")} | \
                {f"{k}_gen":_avg(grp(k),lambda c:c.gen)     for k in("omnivore","pred","micro","apex")} | \
                {f"{k}_fit":_avg(grp(k),lambda c:c.fitness) for k in("omnivore","pred","micro","apex")}
 
 # ── Orbit camera ──────────────────────────────────────────────────────────────
-class OrbitCamera:
-    def __init__(self):
+class OrbitCamera:  # 3D orbit camera; left-drag to rotate, scroll to zoom
+    def __init__(self):  # sets default orbit position centered on the world
         self.cx=WORLD_W/2; self.cz=WORLD_H/2
         self.dist=900.0; self.azim=45.0; self.elev=35.0
         self._drag=False; self._last=None
 
-    def handle_event(self, ev):
+    def handle_event(self, ev):  # processes mouse drag for azimuth/elevation orbit and scroll wheel for zoom distance
         if ev.type==pygame.MOUSEBUTTONDOWN and ev.button==1:
             self._drag=True; self._last=ev.pos
         elif ev.type==pygame.MOUSEBUTTONUP and ev.button==1:
@@ -976,7 +982,7 @@ class OrbitCamera:
         elif ev.type==pygame.MOUSEWHEEL:
             self.dist=max(100.,min(3000.,self.dist-ev.y*40))
 
-    def get_mvp(self, w, h):
+    def get_mvp(self, w, h):  # computes combined projection × view matrix from current orbit angles and distance
         ar=math.radians(self.azim); er=math.radians(self.elev)
         ex=self.cx+self.dist*math.cos(er)*math.cos(ar)
         ey=        self.dist*math.sin(er)
@@ -989,21 +995,21 @@ class OrbitCamera:
         return (P@V).T.copy()
 
     @property
-    def eye(self):
+    def eye(self):  # world-space camera position derived from orbit azimuth, elevation, and distance
         ar=math.radians(self.azim); er=math.radians(self.elev)
         return np.array([self.cx+self.dist*math.cos(er)*math.cos(ar),
                          self.dist*math.sin(er),
                          self.cz+self.dist*math.cos(er)*math.sin(ar)],np.float32)
 
 # ── 3D Renderer ───────────────────────────────────────────────────────────────
-class Renderer3D:
-    def __init__(self, ctx: moderngl.Context):
+class Renderer3D:  # OpenGL instanced renderer; draws terrain, water, per-species meshes, path lines, and dual HUD panels
+    def __init__(self, ctx: moderngl.Context):  # compiles shaders, allocates per-species VAOs and instance buffers, loads fonts for HUD
         self.ctx=ctx
         self.ctx.enable(moderngl.DEPTH_TEST|moderngl.BLEND)
         self.ctx.blend_func=moderngl.SRC_ALPHA,moderngl.ONE_MINUS_SRC_ALPHA
 
         # ── Sphere geometry ──
-        self.sphere_verts, self.sphere_indices = _make_uv_sphere(12, 18)
+        self.sphere_verts, self.sphere_indices = _make_uv_sphere(8, 16)
         self.sphere_vbo = ctx.buffer(self.sphere_verts.tobytes())
         self.sphere_ebo = ctx.buffer(self.sphere_indices.tobytes())
         self.sp_vbo, self.sp_ebo = self.sphere_vbo, self.sphere_ebo
@@ -1067,6 +1073,7 @@ class Renderer3D:
 
         self.light_dir=np.array([-0.4,-1.0,-0.3],np.float32)
         self.light_dir/=np.linalg.norm(self.light_dir)
+        self._light_bytes=self.light_dir.tobytes()
         self.species_log_scroll = 0
         self.extinction_log_scroll = 0
 
@@ -1110,37 +1117,38 @@ class Renderer3D:
 
     # ── pack instance buffer ──
     @staticmethod
-    def _pack(creatures_or_food, scale_fn, color_fn, height_fn):
+    def _pack(creatures_or_food, scale_fn, color_fn, height_fn):  # packs position, color, and scale into a flat float32 array for GPU instanced draw calls
         if not creatures_or_food: return None
         n = len(creatures_or_food)
-        arr = np.empty(n * 9, dtype=np.float32)
-        for i in range(n):
-            c = creatures_or_food[i]
-            off = i * 9
-            arr[off] = c.x
-            arr[off+1] = height_fn(c)
-            arr[off+2] = c.y
-            col = color_fn(c); arr[off+3] = col[0]; arr[off+4] = col[1]; arr[off+5] = col[2]
-            scl = scale_fn(c); arr[off+6] = scl[0]; arr[off+7] = scl[1]; arr[off+8] = scl[2]
-        return arr
+        arr = np.empty((n, 9), dtype=np.float32)
+        arr[:, 0] = [c.x for c in creatures_or_food]
+        arr[:, 1] = [height_fn(c) for c in creatures_or_food]
+        arr[:, 2] = [c.y for c in creatures_or_food]
+        arr[:, 3:6] = [color_fn(c) for c in creatures_or_food]
+        arr[:, 6:9] = [scale_fn(c) for c in creatures_or_food]
+        return arr.ravel()
 
-    def render(self, world: World, camera: OrbitCamera, fps: float, speed: int, show_paths: bool = False):
+    def render(self, world: World, camera: OrbitCamera, fps: float, show_paths: bool = False):  # full frame: terrain, water pools, food spheres, per-species creature meshes, optional path lines, then HUD
         self.ctx.clear(0.60, 0.75, 0.85, 1.0)
         mvp=camera.get_mvp(WIN_W,WIN_H)
+        mvp_bytes=mvp.tobytes()
 
-        self.terr_prog['u_mvp'].write(mvp.tobytes())
+        self.terr_prog['u_mvp'].write(mvp_bytes)
         self.terr_vao.render(moderngl.TRIANGLES)
 
         pools=world.water_pools
         if pools:
             pd=np.array([[w.x,0.,w.y,w.radius] for w in pools],np.float32)
             self.water_inst_buf.write(pd.tobytes())
-            self.water_prog['u_mvp'].write(mvp.tobytes())
+            self.water_prog['u_mvp'].write(mvp_bytes)
             self.water_vao.render(moderngl.TRIANGLE_FAN,instances=len(pools))
 
-        alive_food=[f for f in world.foods if f.alive]
+        self.sp_prog['u_mvp'].write(mvp_bytes)
+        self.sp_prog['u_light'].write(self._light_bytes)
+
+        alive_food=world.foods
         if alive_food:
-            def fcol(f): 
+            def fcol(f):
                 if f.needs_pollination: return FOOD_POLL_RGB
                 return FOOD_RIPE_RGB if f.growth>=1.0 else FOOD_UNRIPE_RGB
             fsc=lambda f: (2.5, 2.5, 2.5) if f.growth>=1.0 else (1.5+f.growth, 1.5+f.growth, 1.5+f.growth)
@@ -1148,11 +1156,9 @@ class Renderer3D:
             fd=self._pack(alive_food,fsc,fcol,fht)
             self.food_inst_buf.orphan(len(alive_food)*(3+3+3)*4)
             self.food_inst_buf.write(fd.tobytes())
-            self.sp_prog['u_mvp'].write(mvp.tobytes())
-            self.sp_prog['u_light'].write(self.light_dir.tobytes())
             self.food_vao.render(moderngl.TRIANGLES,instances=len(alive_food))
 
-        alive_creatures = [c for c in world.creatures if c.alive]
+        alive_creatures = world.creatures
         if alive_creatures:
             def ccol(c): return c.color_rgb
             cht=lambda c: c.display_y
@@ -1172,8 +1178,6 @@ class Renderer3D:
                 omnivore_data = self._pack(omnivore_creatures, csc_omnivore, ccol, cht)
                 self.inst_buf.orphan(len(omnivore_creatures)*(3+3+3)*4)
                 self.inst_buf.write(omnivore_data.tobytes())
-                self.sp_prog['u_mvp'].write(mvp.tobytes())
-                self.sp_prog['u_light'].write(self.light_dir.tobytes())
                 self.omnivore_vao.render(moderngl.TRIANGLES, instances=len(omnivore_creatures))
 
             pred_creatures = creatures_by_kind["pred"]
@@ -1182,8 +1186,6 @@ class Renderer3D:
                 pred_data = self._pack(pred_creatures, csc_pred, ccol, cht)
                 self.inst_buf.orphan(len(pred_creatures)*(3+3+3)*4)
                 self.inst_buf.write(pred_data.tobytes())
-                self.sp_prog['u_mvp'].write(mvp.tobytes())
-                self.sp_prog['u_light'].write(self.light_dir.tobytes())
                 self.pred_vao.render(moderngl.TRIANGLES, instances=len(pred_creatures))
 
             apex_creatures = creatures_by_kind["apex"]
@@ -1192,8 +1194,6 @@ class Renderer3D:
                 apex_data = self._pack(apex_creatures, csc_apex, ccol, cht)
                 self.inst_buf.orphan(len(apex_creatures)*(3+3+3)*4)
                 self.inst_buf.write(apex_data.tobytes())
-                self.sp_prog['u_mvp'].write(mvp.tobytes())
-                self.sp_prog['u_light'].write(self.light_dir.tobytes())
                 self.apex_vao.render(moderngl.TRIANGLES, instances=len(apex_creatures))
 
             micro_creatures = creatures_by_kind["micro"]
@@ -1202,48 +1202,48 @@ class Renderer3D:
                 micro_data = self._pack(micro_creatures, csc_micro, ccol, cht)
                 self.inst_buf.orphan(len(micro_creatures)*(3+3+3)*4)
                 self.inst_buf.write(micro_data.tobytes())
-                self.sp_prog['u_mvp'].write(mvp.tobytes())
-                self.sp_prog['u_light'].write(self.light_dir.tobytes())
                 self.micro_vao.render(moderngl.TRIANGLES, instances=len(micro_creatures))
 
         if show_paths and alive_creatures:
-            self._render_paths(alive_creatures, mvp)
+            self._render_paths(alive_creatures, mvp_bytes)
 
-        self._draw_hud(world, fps, speed, show_paths)
+        self._draw_hud(world, fps, show_paths)
 
-    def _render_paths(self, creatures, mvp):
+    def _render_paths(self, creatures, mvp_bytes):  # draws GL_LINES from each creature to its current navigation target
         valid_c = [c for c in creatures if c.target_x is not None]
         if not valid_c: return
-        
         n = len(valid_c)
-        data = np.zeros((n * 2, 6), dtype=np.float32)
-        for i, c in enumerate(valid_c):
-            col = c.color_rgb
-            cy = c.display_y
-            tx, ty = c.target_x, c.target_y
-            data[i*2]     = [c.x, cy, c.y, col[0], col[1], col[2]]
-            data[i*2 + 1] = [tx, 1.0, ty, col[0], col[1], col[2]]
-
+        xs  = np.array([c.x         for c in valid_c], np.float32)
+        ys  = np.array([c.display_y for c in valid_c], np.float32)
+        zs  = np.array([c.y         for c in valid_c], np.float32)
+        txs = np.array([c.target_x  for c in valid_c], np.float32)
+        tys = np.array([c.target_y  for c in valid_c], np.float32)
+        clr = np.array([c.color_rgb for c in valid_c], np.float32)
+        ones = np.ones(n, np.float32)
+        starts = np.column_stack([xs, ys, zs, clr])
+        ends   = np.column_stack([txs, ones, tys, clr])
+        data = np.empty((n * 2, 6), np.float32)
+        data[0::2] = starts
+        data[1::2] = ends
         n_verts = n * 2
         self.path_buf.orphan(n_verts * 6 * 4)
         self.path_buf.write(data.tobytes())
-        self.path_prog['u_mvp'].write(mvp.tobytes()) 
+        self.path_prog['u_mvp'].write(mvp_bytes)
         self.ctx.line_width = 1.5
         self.ctx.enable(moderngl.BLEND)
         self.path_vao.render(moderngl.LINES, vertices=n_verts)
 
-    def _draw_hud(self, world: World, fps: float, speed: int, show_paths: bool = False):
+    def _draw_hud(self, world: World, fps: float, show_paths: bool = False):  # renders right HUD (stats, designer, species log) and left HUD (extinction log, controls) onto pygame surfaces then uploads as textures
         s=self.hud_surf; s.fill((15,18,25,195))
         lc=world._last_counts
         y=10; pad=8
-        def txt(text,row,col=(200,220,200),bold=False):
+        def txt(text,row,col=(200,220,200),bold=False):  # blits a text line onto the right HUD surface and returns the next y offset
             f=self.font_md if bold else self.font_sm
             surf=f.render(text,True,col); s.blit(surf,(pad,row))
             return row+surf.get_height()+2
 
         y=txt("NEURAL ECOSYSTEM 3D",y,(130,200,255),bold=True)
         y=txt(f"Tick:{world.tick:>6}  FPS:{fps:>5.1f}",y)
-        y=txt(f"Speed:{speed}x", y)
 
         # ── Play/Pause toggle button ──
         y += 8
@@ -1389,7 +1389,7 @@ class Renderer3D:
 
         # ── Left HUD ──
         sl = self.left_hud_surf; sl.fill((15,18,25,195))
-        def txt_l(text, row, col=(200,220,200), bold=False):
+        def txt_l(text, row, col=(200,220,200), bold=False):  # blits a text line onto the left HUD surface and returns the next y offset
             f = self.font_md if bold else self.font_sm
             surf = f.render(text, True, col); sl.blit(surf, (pad, row))
             return row + surf.get_height() + 2
@@ -1418,11 +1418,11 @@ class Renderer3D:
 
         controls_start_y = WIN_H - 110
         txt_l("── CONTROLS ──", controls_start_y, (150,150,150), bold=True); controls_start_y += 18
-        for line in ["SPACE pause  R reset","P target paths  E event","Mouse drag: orbit","Scroll: zoom  +/-: speed"]:
+        for line in ["SPACE pause  R reset","P target paths  E event","Mouse drag: orbit","Scroll: zoom"]:
             controls_start_y = txt_l(line, controls_start_y, (120,130,120))
 
         self._hud_tick += 1
-        if self._hud_tick % 3 == 0:
+        if self._hud_tick % 4 == 0:
             raw=pygame.image.tobytes(s,"RGBA",False)
             self.hud_tex.write(raw)
             l_raw=pygame.image.tobytes(self.left_hud_surf,"RGBA",False)
@@ -1437,7 +1437,7 @@ class Renderer3D:
         self.ctx.enable(moderngl.DEPTH_TEST)
 
 # ── Application ───────────────────────────────────────────────────────────────
-class App:
+class App:  # main application; owns the pygame window, world, camera, and renderer
     def __init__(self):
         pygame.init()
         pygame.display.set_caption("Neural Ecosystem Simulator 3D")
@@ -1447,7 +1447,6 @@ class App:
         self.camera=OrbitCamera()
         self.renderer=Renderer3D(self.ctx)
         self.clock=pygame.time.Clock()
-        self.speed=1
         self.show_paths=False
         self._fps=0.0; self._fc=0; self._ft=time.time()
 
@@ -1475,10 +1474,6 @@ class App:
                         self.world._species_event()
                     elif ev.key==pygame.K_p:
                         self.show_paths=not self.show_paths
-                    elif ev.key in(pygame.K_EQUALS,pygame.K_PLUS):
-                        self.speed=min(20,self.speed+1)
-                    elif ev.key==pygame.K_MINUS:
-                        self.speed=max(1,self.speed-1)
                 if ev.type==pygame.MOUSEBUTTONDOWN and ev.button==1:
                     mx, my = ev.pos
                     if mx >= WIN_W - HUD_W:
@@ -1535,16 +1530,13 @@ class App:
                             self.renderer.extinction_log_scroll -= ev.y * 10
 
             if self.world.running:
-                t_start = time.perf_counter()
-                for _ in range(self.speed):
-                    self.world.step()
-                    if time.perf_counter() - t_start > 0.012: break
+                self.world.step()
 
             self._fc+=1; now=time.time()
             if now-self._ft>=1.0:
                 self._fps=self._fc/(now-self._ft); self._fc=0; self._ft=now
 
-            self.renderer.render(self.world,self.camera,self._fps,self.speed,self.show_paths)
+            self.renderer.render(self.world,self.camera,self._fps,self.show_paths)
             pygame.display.flip()
             self.clock.tick(60)
 
