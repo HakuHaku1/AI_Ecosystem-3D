@@ -17,7 +17,11 @@ A real-time **3D evolutionary ecosystem simulation** powered by neural networks 
 
 ## 🐍 Python Version
 
-**Python 3.10 – 3.12** recommended. PyTorch CUDA wheels are best tested on these versions.
+**Python 3.8 – 3.12** supported.  
+**Minimum:** Python 3.8  
+**Recommended:** Python 3.10 – 3.12 (PyTorch best tested on these versions)
+
+Windows users: **`run.bat`** will auto-download Python 3.12 if not found.
 
 ---
 
@@ -44,14 +48,32 @@ A real-time **3D evolutionary ecosystem simulation** powered by neural networks 
 
 ## ⚙️ Installation
 
-### 1. Clone
+### Windows (Easiest)
+
+Simply double-click **`run.bat`** — it will:
+- ✅ Auto-detect or download Python 3.12 (if not found)
+- ✅ Verify Python 3.8+ is installed
+- ✅ Install all required dependencies (pip, torch, numpy, pygame, moderngl, cython)
+- ✅ Launch the simulator
+
+### Manual Installation (Windows, macOS, Linux)
+
+#### 1. Clone
 
 ```bash
 git clone https://github.com/your-username/neural-ecosystem-3d.git
 cd neural-ecosystem-3d
 ```
 
-### 2. Create a virtual environment (recommended)
+#### 2. Verify Python (3.8 or higher)
+
+```bash
+python --version  # Should show 3.8+
+```
+
+If not installed, download from [python.org](https://www.python.org/downloads/)
+
+#### 3. Create a virtual environment (recommended)
 
 ```bash
 python -m venv venv
@@ -63,13 +85,14 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-### 3. Install core dependencies
+#### 4. Install core dependencies
 
 ```bash
-pip install torch numpy pygame moderngl
+pip install --upgrade pip setuptools wheel
+pip install torch numpy pygame moderngl cython
 ```
 
-### 4. PyTorch with CUDA (NVIDIA GPU)
+#### 5. PyTorch with CUDA (NVIDIA GPU - Optional)
 
 Visit [pytorch.org](https://pytorch.org/get-started/locally/) to get the right wheel for your CUDA version. Example for CUDA 12.1:
 
@@ -83,10 +106,18 @@ Then optionally install CuPy for zero-copy GPU sensing:
 pip install cupy-cuda12x   # match your CUDA version
 ```
 
-### 5. Run
+#### 6. Run
 
 ```bash
-python main.py
+python neural_system_3d.py
+```
+
+### Note: Visual C++ Build Tools (Windows)
+
+If Cython compilation fails, install **Visual C++ Build Tools** from [Microsoft](https://visualstudio.microsoft.com/downloads/) (free), then reinstall Cython:
+
+```bash
+pip install --force-reinstall cython
 ```
 
 ---
@@ -111,9 +142,13 @@ CuPy is used automatically when CUDA is available, enabling zero-copy tensor↔a
 
 ---
 
-## ⚡ Cython Setup (Optional)
+## ⚡ Cython Setup (Optional Acceleration)
 
 Cython compiles the inner simulation loop to C for a speed boost.
+
+**Windows users:** `run.bat` installs Cython automatically. If compilation fails, install Visual C++ Build Tools and restart.
+
+**Manual compilation:**
 
 ```bash
 pip install cython
@@ -125,7 +160,7 @@ If successful:
 Cython acceleration: ON
 ```
 
-Falls back silently if not built.
+Falls back silently to pure Python if not built.
 
 ---
 
@@ -174,10 +209,11 @@ All creature rendering uses **GPU instancing** — one draw call per species typ
 
 ```
 neural-ecosystem-3d/
-├── main.py               # App, World, Renderer3D, OrbitCamera
-├── species_config.py     # Names, hex colors, environment palette
-├── setup.py              # Cython build script (optional)
-├── sim_core.pyx          # Cython simulation core (optional)
+├── run.bat                # Windows auto-installer & launcher
+├── neural_system_3d.py    # Main app (World, Renderer3D, OrbitCamera)
+├── species_config.py      # Names, hex colors, environment palette
+├── setup.py               # Cython build script
+├── sim_core.pyx           # Cython simulation core (optional acceleration)
 └── README.md
 ```
 
@@ -185,17 +221,26 @@ neural-ecosystem-3d/
 
 ## 📋 Requirements Summary
 
-```
-python >= 3.10
-torch
-numpy
-pygame
-moderngl
+**Minimum Python:** 3.8+  
+**Recommended:** Python 3.10 – 3.12
 
-# Optional
-cupy-cuda12x       # CUDA GPU sensing acceleration
-torch-directml     # Windows AMD/Intel GPU
-cython             # Compiled simulation core
+### Required Packages
+
+```
+python >= 3.8
+torch           # Neural networks & GPU batching
+numpy           # Array math
+pygame          # Window & HUD rendering
+moderngl        # OpenGL 3.3 rendering
+cython          # Simulation core compilation
+```
+
+### Optional but Recommended
+
+```
+cupy-cuda12x       # Zero-copy GPU arrays (CUDA only, faster sensing)
+torch-directml     # GPU on Windows AMD/Intel
+visual-c++-build   # Windows: for Cython compilation
 ```
 
 Or as `requirements.txt`:
@@ -205,7 +250,10 @@ torch
 numpy
 pygame
 moderngl
+cython
 ```
+
+**Quick install on Windows:** Just run `run.bat`! It handles everything automatically.
 
 ---
 
